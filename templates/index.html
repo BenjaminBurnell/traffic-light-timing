@@ -3,8 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Traffic Light Tracker</title>
-    <!-- Leaflet CSS -->
+    <title>Traffic Light Tracker - Toronto</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
     <style> 
         body {
@@ -30,6 +29,8 @@
         #intersection-name {
             font-size: 24px;
             font-weight: 600;
+            max-width: 90vw;
+            text-align: center;
         }
     
         #distance-text {
@@ -38,17 +39,15 @@
             margin-top: 5px;
         }
         
-        /* Map Container Settings */
         #map {
             width: 90%;
             max-width: 400px;
             height: 250px;
             border-radius: 15px;
             border: 1px solid rgb(110, 110, 110);
-            z-index: 1; /* Keep behind custom UI elements if needed */
+            z-index: 1; 
         }
 
-        /* Dark Mode Hack for OpenStreetMap Tiles */
         .leaflet-layer,
         .leaflet-control-zoom-in,
         .leaflet-control-zoom-out,
@@ -96,11 +95,10 @@
 </head>
 <body>
     <div id="status-container">
-        <div id="intersection-name">Searching...</div>
+        <div id="intersection-name">Loading Intersections...</div>
         <div id="distance-text">Waiting for GPS</div>
     </div>
 
-    <!-- The Map Render Target -->
     <div id="map"></div>
 
     <div id="full-light">    
@@ -113,10 +111,8 @@
         <div id="timing">--</div><span class="text">s</span>
     </div>
     
-    <!-- Leaflet JS -->
     <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
     <script>
-        // DOM Elements
         const timer = document.getElementById("timing");
         const greenLight = document.getElementById("light-green");
         const amberLight = document.getElementById("light-amber");
@@ -127,48 +123,67 @@
         let intersections = [];
         let activeIntersection = null;
 
-        // Map Variables
-        let map, userMarker, intersectionMarker;
-
-        // Initialize Map (Defaulting to a wide view before GPS locks on)
-        map = L.map('map').setView([43.65, -79.38], 10);
+        let map = L.map('map').setView([43.6532, -79.3832], 12); // Default to Toronto
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
             maxZoom: 19,
             attribution: '© OpenStreetMap'
         }).addTo(map);
 
-        // Convert CSV string to array of objects
-        function csvToJson(csvContent) {
+        let userMarker, intersectionMarker;
+
+        // Custom CSV parser handling quotes in names
+        function parseCSV(csvContent) {
             const rows = csvContent.trim().split(/\r?\n/);
-            const headers = rows.shift().split(',').map(h => h.trim());
-            return rows.map(row => {
-                const values = row.split(',').map(v => v.trim());
-                return headers.reduce((obj, header, i) => {
-                    obj[header] = values[i];
-                    return obj;
-                }, {});
-            });
+            const headers = rows[0].split(',').map(h => h.trim());
+            const data = [];
+            
+            for(let i = 1; i < rows.length; i++) {
+                // Handle potential commas inside quoted street names
+                const values = rows[i].match(/(".*?"|[^",\s]+)(?=\s*,|\s*$)/g) || rows[i].split(',');
+                
+                if (values.length < 4) continue;
+                
+                const obj = {};
+                headers.forEach((header, index) => {
+                    if (values[index]) {
+                        obj[header] = values[index].replace(/^"|"$/g, '').trim();
+                    }
+                });
+                data.push(obj);
+            }
+            return data;
         }
 
-        // Fetch and parse the CSV
-        fetch('traffic-signals-timing.csv')
+        fetch('traffic-signals-combined.csv')
             .then(response => response.text())
             .then(csvContent => {
-                const data = csvToJson(csvContent);
+                const data = parseCSV(csvContent);
                 
-                intersections = data.map(row => ({
-                    name: row.name || "Unknown Intersection",
-                    lat: parseFloat(row.lat),
-                    lon: parseFloat(row.lon),
-                    cycleLength: parseInt(row.cycleLength),
-                    greenDuration: parseInt(row.greenDuration),
-                    yellowDuration: parseInt(row.yellowDuration) || 5, 
-                    syncOffset: parseInt(row.syncOffset) || 0
-                }));
+                // Deduplicate by TCS ID and assign mock cycle timings
+                const uniqueIntersections = new Map();
+                data.forEach(row => {
+                    if (!uniqueIntersections.has(row.TCS)) {
+                        uniqueIntersections.set(row.TCS, {
+                            id: row.TCS,
+                            name: row.name || "Unknown Intersection",
+                            lat: parseFloat(row.lat),
+                            lon: parseFloat(row.lon),
+                            cycleLength: 90,       // Mocked 90s cycle
+                            greenDuration: 40,     // 40s green
+                            yellowDuration: 5,     // 5s amber
+                            syncOffset: (parseInt(row.TCS) * 13) % 90 // Randomize start times slightly based on ID
+                        });
+                    }
+                });
+                
+                intersections = Array.from(uniqueIntersections.values());
+                intersectionName.innerText = "Ready. Searching for nearest light...";
             })
-            .catch(error => console.error('Error fetching CSV:', error));
+            .catch(error => {
+                console.error('Error fetching CSV:', error);
+                intersectionName.innerText = "Error loading data.";
+            });
 
-        // Haversine formula to get distance in meters
         function getDistance(lat1, lon1, lat2, lon2) {
             const R = 6371e3; 
             const p1 = lat1 * Math.PI/180;
@@ -178,27 +193,31 @@
             const a = Math.sin(dp/2) * Math.sin(dp/2) +
                       Math.cos(p1) * Math.cos(p2) *
                       Math.sin(dl/2) * Math.sin(dl/2);
-            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-            return R * c; 
+            return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)); 
         }
 
-        // Start watching GPS location
         if ("geolocation" in navigator) {
             navigator.geolocation.watchPosition((position) => {
-                const userLat = position.coords.latitude;
-                const userLon = position.coords.longitude;
+                // const userLat = position.coords.latitude;
+                // const userLon = position.coords.longitude;
+                const userLat = 43.598576;
+                const userLon = -79.517121;
+
                 
-                // Update or create user map marker
+                // const userLat = 43.600060;
+                // const userLon = -79.517771;
+                
                 if (!userMarker) {
                     userMarker = L.marker([userLat, userLon]).addTo(map);
-                    userMarker.bindPopup("You are here").openPopup();
-                    map.setView([userLat, userLon], 16); // Zoom in on first lock
+                    userMarker.bindPopup("You").openPopup();
+                    map.setView([userLat, userLon], 16); 
                 } else {
                     userMarker.setLatLng([userLat, userLon]);
-                    map.setView([userLat, userLon]); // Keep map centered on movement
+                    map.setView([userLat, userLon]); 
                 }
 
-                // Find closest intersection within 300 meters
+                if (intersections.length === 0) return;
+
                 let closest = null;
                 let minDistance = 300;
 
@@ -215,13 +234,9 @@
                     intersectionName.innerText = activeIntersection.name;
                     distanceText.innerText = `${Math.round(minDistance)} meters away`;
 
-                    // Update or create intersection map marker
                     if (!intersectionMarker) {
                         intersectionMarker = L.circleMarker([closest.lat, closest.lon], {
-                            color: 'red',
-                            fillColor: '#f03',
-                            fillOpacity: 0.5,
-                            radius: 12
+                            color: 'red', fillColor: '#f03', fillOpacity: 0.5, radius: 12
                         }).addTo(map);
                     } else {
                         intersectionMarker.setLatLng([closest.lat, closest.lon]);
@@ -232,7 +247,6 @@
                     distanceText.innerText = "No known lights nearby";
                     resetLights();
                     
-                    // Remove intersection marker if leaving range
                     if (intersectionMarker) {
                         map.removeLayer(intersectionMarker);
                         intersectionMarker = null;
@@ -240,12 +254,10 @@
                 }
             }, (error) => {
                 console.error("GPS Error:", error);
-                intersectionName.innerText = "Location Disabled";
                 distanceText.innerText = "Please enable GPS";
-            }, { enableHighAccuracy: true });
+            }, { enableHighAccuracy: true, maximumAge: 0, timeout: 5000 });
         }
 
-        // Main Timing Loop
         setInterval(() => {
             if (!activeIntersection) return;
 
@@ -275,6 +287,9 @@
             greenLight.classList.remove('active');
             amberLight.classList.remove('active');
             redLight.classList.remove('active');
+            greenLight.style.color = "";
+            amberLight.style.color = "";
+            redLight.style.color = "";
 
             if (color === "green") {
                 greenLight.classList.add('active');
