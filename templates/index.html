@@ -3,134 +3,298 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Green Light Speed Advisory</title>
-    <!-- Mapbox GL JS CDN -->
-    <script src="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js"></script>
-    <link href="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css" rel="stylesheet" />
-    <style>
-        body { margin: 0; padding: 0; font-family: system-ui, sans-serif; background: #111; color: #fff;}
-        #map { position: absolute; top: 0; bottom: 0; width: 100%; z-index: 0; }
+    <title>Traffic Light Tracker</title>
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+    <style> 
+        body {
+            padding: 0px;
+            margin: 0px;
+            width: 100vw;
+            height: 100vh;
+            background: rgb(30, 30, 30);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            gap: 15px;
+        }
+    
+        #status-container {
+            text-align: center;
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            color: white;
+            margin-top: 20px;
+        }
+    
+        #intersection-name {
+            font-size: 24px;
+            font-weight: 600;
+        }
+    
+        #distance-text {
+            font-size: 14px;
+            color: #aaa;
+            margin-top: 5px;
+        }
         
-        /* Glassmorphism Dashboard */
-        #dashboard {
-            position: absolute;
-            bottom: 30px;
-            left: 50%;
-            transform: translateX(-50%);
+        /* Map Container Settings */
+        #map {
             width: 90%;
             max-width: 400px;
-            background: rgba(30, 41, 59, 0.95);
-            padding: 20px;
-            border-radius: 16px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
-            z-index: 10;
-            backdrop-filter: blur(10px);
-            border: 1px solid rgba(255,255,255,0.1);
+            height: 250px;
+            border-radius: 15px;
+            border: 1px solid rgb(110, 110, 110);
+            z-index: 1; /* Keep behind custom UI elements if needed */
         }
 
-        h2 { margin: 0 0 10px 0; font-size: 1.2rem; color: #9ca3af; }
-        .data-row { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 1.1rem; }
-        
-        .light-status {
-            text-align: center;
-            font-size: 1.5rem;
-            font-weight: bold;
-            padding: 10px;
-            border-radius: 8px;
-            margin: 15px 0;
-            color: #000;
+        /* Dark Mode Hack for OpenStreetMap Tiles */
+        .leaflet-layer,
+        .leaflet-control-zoom-in,
+        .leaflet-control-zoom-out,
+        .leaflet-control-attribution {
+            filter: invert(100%) hue-rotate(180deg) brightness(95%) contrast(90%);
         }
-
-        /* Dynamic Light Colors */
-        .Green { background-color: #22c55e; }
-        .Yellow { background-color: #eab308; }
-        .Red { background-color: #ef4444; color: #fff;}
-        .Unknown { background-color: #6b7280; color: #fff; }
-
-        .advisory { text-align: center; font-size: 1.2rem; font-weight: 600; color: #38bdf8; }
+    
+        #full-light {
+            background: rgb(49, 49, 49);
+            border: 1px solid rgb(110, 110, 110);
+            width: fit-content;
+            height: fit-content;
+            padding: 25px 15px;
+            border-radius: 15px;
+            gap: 5px;
+            display: flex;
+            flex-direction: column;
+        }
+    
+        .circle {
+            width: 35px;
+            height: 35px;
+            border: 1px solid rgb(30, 30, 30);
+            border-radius: 100px;
+            transition: opacity 0.2s ease;
+        }
+    
+        .green { background: rgb(66, 212, 46); opacity: 0.2; }
+        .amber { background: rgb(219, 193, 26); opacity: 0.2; }
+        .red   { background: rgb(219, 26, 26); opacity: 0.2; }
+    
+        .active {
+            opacity: 1;
+            box-shadow: 0 0 15px currentColor;
+        }
+    
+        #timing, .text {
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            color: white;
+            font-size: 25px;
+            font-weight: 600;
+            font-variant-numeric: tabular-nums;
+        }
     </style>
 </head>
 <body>
-
-    <div id="map"></div>
-    
-    <div id="dashboard">
-        <h2 id="intersection-name">Locating nearest signal...</h2>
-        <div class="data-row">
-            <span>Distance:</span>
-            <span id="distance">-- m</span>
-        </div>
-        <div class="data-row">
-            <span>Your Speed:</span>
-            <span id="user-speed">-- km/h</span>
-        </div>
-        
-        <div id="light-display" class="light-status Unknown">
-            Connecting...
-        </div>
-
-        <div id="advisory-message" class="advisory">Waiting for GPS lock...</div>
+    <div id="status-container">
+        <div id="intersection-name">Searching...</div>
+        <div id="distance-text">Waiting for GPS</div>
     </div>
 
+    <!-- The Map Render Target -->
+    <div id="map"></div>
+
+    <div id="full-light">    
+        <div id="light-green" class="circle green"></div>
+        <div id="light-amber" class="circle amber"></div>
+        <div id="light-red" class="circle red"></div>
+    </div>
+    
+    <div style="display: flex;">
+        <div id="timing">--</div><span class="text">s</span>
+    </div>
+    
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
     <script>
-        // 1. Initialize Mapbox
-        mapboxgl.accessToken = 'YOUR_MAPBOX_TOKEN_HERE'; 
-        const map = new mapboxgl.Map({
-            container: 'map',
-            style: 'mapbox://styles/mapbox/dark-v11', 
-            center: [-79.3832, 43.6532], // Default map center (Toronto)
-            zoom: 14,
-            pitch: 45 // Tilts the map for a navigation view
-        });
+        // DOM Elements
+        const timer = document.getElementById("timing");
+        const greenLight = document.getElementById("light-green");
+        const amberLight = document.getElementById("light-amber");
+        const redLight = document.getElementById("light-red");
+        const intersectionName = document.getElementById("intersection-name");
+        const distanceText = document.getElementById("distance-text");
 
-        // Add a blue dot marker for the user
-        const userMarker = new mapboxgl.Marker({ color: '#3b82f6' })
-            .setLngLat([-79.3832, 43.6532])
-            .addTo(map);
+        let intersections = [];
+        let activeIntersection = null;
 
-        // 2. Track User's GPS Location natively through the browser
-        if ('geolocation' in navigator) {
-            navigator.geolocation.watchPosition(
-                async (position) => {
-                    const lat = position.coords.latitude;
-                    const lng = position.coords.longitude;
-                    const speed = position.coords.speed || 0; 
-                    
-                    // Update map and marker live
-                    userMarker.setLngLat([lng, lat]);
-                    map.flyTo({ center: [lng, lat], speed: 0.5 });
-                    
-                    // Convert m/s to km/h for the display
-                    document.getElementById('user-speed').innerText = Math.round(speed * 3.6) + ' km/h';
+        // Map Variables
+        let map, userMarker, intersectionMarker;
 
-                    // 3. Query the Python backend for the speed advisory
-                    try {
-                        const response = await fetch(`/api/glosa?lat=${lat}&lng=${lng}&speed=${speed}`);
-                        const data = await response.json();
-                        
-                        if (data.error) return;
+        // Initialize Map (Defaulting to a wide view before GPS locks on)
+        map = L.map('map').setView([43.65, -79.38], 10);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+            attribution: '© OpenStreetMap'
+        }).addTo(map);
 
-                        // Update the dashboard HTML
-                        document.getElementById('intersection-name').innerText = data.intersection;
-                        document.getElementById('distance').innerText = data.distance_m + ' m';
-                        
-                        const display = document.getElementById('light-display');
-                        display.className = 'light-status ' + data.state;
-                        display.innerText = data.state + ' - ' + data.time_left_sec + 's';
-                        
-                        document.getElementById('advisory-message').innerText = data.advisory;
+        // Convert CSV string to array of objects
+        function csvToJson(csvContent) {
+            const rows = csvContent.trim().split(/\r?\n/);
+            const headers = rows.shift().split(',').map(h => h.trim());
+            return rows.map(row => {
+                const values = row.split(',').map(v => v.trim());
+                return headers.reduce((obj, header, i) => {
+                    obj[header] = values[i];
+                    return obj;
+                }, {});
+            });
+        }
 
-                    } catch (err) {
-                        console.error('Error fetching data:', err);
+        // Fetch and parse the CSV
+        fetch('traffic-signals-timing.csv')
+            .then(response => response.text())
+            .then(csvContent => {
+                const data = csvToJson(csvContent);
+                
+                intersections = data.map(row => ({
+                    name: row.name || "Unknown Intersection",
+                    lat: parseFloat(row.lat),
+                    lon: parseFloat(row.lon),
+                    cycleLength: parseInt(row.cycleLength),
+                    greenDuration: parseInt(row.greenDuration),
+                    yellowDuration: parseInt(row.yellowDuration) || 5, 
+                    syncOffset: parseInt(row.syncOffset) || 0
+                }));
+            })
+            .catch(error => console.error('Error fetching CSV:', error));
+
+        // Haversine formula to get distance in meters
+        function getDistance(lat1, lon1, lat2, lon2) {
+            const R = 6371e3; 
+            const p1 = lat1 * Math.PI/180;
+            const p2 = lat2 * Math.PI/180;
+            const dp = (lat2-lat1) * Math.PI/180;
+            const dl = (lon2-lon1) * Math.PI/180;
+            const a = Math.sin(dp/2) * Math.sin(dp/2) +
+                      Math.cos(p1) * Math.cos(p2) *
+                      Math.sin(dl/2) * Math.sin(dl/2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+            return R * c; 
+        }
+
+        // Start watching GPS location
+        if ("geolocation" in navigator) {
+            navigator.geolocation.watchPosition((position) => {
+                const userLat = position.coords.latitude;
+                const userLon = position.coords.longitude;
+                
+                // Update or create user map marker
+                if (!userMarker) {
+                    userMarker = L.marker([userLat, userLon]).addTo(map);
+                    userMarker.bindPopup("You are here").openPopup();
+                    map.setView([userLat, userLon], 16); // Zoom in on first lock
+                } else {
+                    userMarker.setLatLng([userLat, userLon]);
+                    map.setView([userLat, userLon]); // Keep map centered on movement
+                }
+
+                // Find closest intersection within 300 meters
+                let closest = null;
+                let minDistance = 300;
+
+                intersections.forEach(intersection => {
+                    const dist = getDistance(userLat, userLon, intersection.lat, intersection.lon);
+                    if (dist < minDistance) {
+                        minDistance = dist;
+                        closest = intersection;
                     }
-                },
-                (error) => {
-                    document.getElementById('intersection-name').innerText = "Please allow location access";
-                },
-                { enableHighAccuracy: true, maximumAge: 0 }
-            );
-        } else {
-            alert("Geolocation is not supported by your browser.");
+                });
+                
+                if (closest) {
+                    activeIntersection = closest;
+                    intersectionName.innerText = activeIntersection.name;
+                    distanceText.innerText = `${Math.round(minDistance)} meters away`;
+
+                    // Update or create intersection map marker
+                    if (!intersectionMarker) {
+                        intersectionMarker = L.circleMarker([closest.lat, closest.lon], {
+                            color: 'red',
+                            fillColor: '#f03',
+                            fillOpacity: 0.5,
+                            radius: 12
+                        }).addTo(map);
+                    } else {
+                        intersectionMarker.setLatLng([closest.lat, closest.lon]);
+                    }
+                } else {
+                    activeIntersection = null;
+                    intersectionName.innerText = "Out of Range";
+                    distanceText.innerText = "No known lights nearby";
+                    resetLights();
+                    
+                    // Remove intersection marker if leaving range
+                    if (intersectionMarker) {
+                        map.removeLayer(intersectionMarker);
+                        intersectionMarker = null;
+                    }
+                }
+            }, (error) => {
+                console.error("GPS Error:", error);
+                intersectionName.innerText = "Location Disabled";
+                distanceText.innerText = "Please enable GPS";
+            }, { enableHighAccuracy: true });
+        }
+
+        // Main Timing Loop
+        setInterval(() => {
+            if (!activeIntersection) return;
+
+            const now = Math.floor(Date.now() / 1000); 
+            const timeInCycle = (now + activeIntersection.syncOffset) % activeIntersection.cycleLength;
+            
+            let color = "";
+            let timeRemaining = 0;
+
+            if (timeInCycle < activeIntersection.greenDuration) {
+                color = "green";
+                timeRemaining = activeIntersection.greenDuration - timeInCycle;
+            } else if (timeInCycle < (activeIntersection.greenDuration + activeIntersection.yellowDuration)) {
+                color = "amber";
+                timeRemaining = (activeIntersection.greenDuration + activeIntersection.yellowDuration) - timeInCycle;
+            } else {
+                color = "red";
+                timeRemaining = activeIntersection.cycleLength - timeInCycle;
+            }
+
+            updateLights(color);
+            timer.innerText = timeRemaining;
+
+        }, 200);
+
+        function updateLights(color) {
+            greenLight.classList.remove('active');
+            amberLight.classList.remove('active');
+            redLight.classList.remove('active');
+
+            if (color === "green") {
+                greenLight.classList.add('active');
+                greenLight.style.color = "rgb(66, 212, 46)"; 
+            }
+            if (color === "amber") {
+                amberLight.classList.add('active');
+                amberLight.style.color = "rgb(219, 193, 26)";
+            }
+            if (color === "red") {
+                redLight.classList.add('active');
+                redLight.style.color = "rgb(219, 26, 26)";
+            }
+        }
+
+        function resetLights() {
+            greenLight.classList.remove('active');
+            amberLight.classList.remove('active');
+            redLight.classList.remove('active');
+            timer.innerText = "--";
         }
     </script>
 </body>
