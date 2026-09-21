@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Green Light Speed Advisory</title>
+    <!-- Mapbox GL JS CDN -->
+    <script src="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js"></script>
+    <link href="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css" rel="stylesheet" />
+    <style>
+        body { margin: 0; padding: 0; font-family: system-ui, sans-serif; background: #111; color: #fff;}
+        #map { position: absolute; top: 0; bottom: 0; width: 100%; z-index: 0; }
+        
+        /* Glassmorphism Dashboard */
+        #dashboard {
+            position: absolute;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 90%;
+            max-width: 400px;
+            background: rgba(30, 41, 59, 0.95);
+            padding: 20px;
+            border-radius: 16px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            z-index: 10;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+
+        h2 { margin: 0 0 10px 0; font-size: 1.2rem; color: #9ca3af; }
+        .data-row { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 1.1rem; }
+        
+        .light-status {
+            text-align: center;
+            font-size: 1.5rem;
+            font-weight: bold;
+            padding: 10px;
+            border-radius: 8px;
+            margin: 15px 0;
+            color: #000;
+        }
+
+        /* Dynamic Light Colors */
+        .Green { background-color: #22c55e; }
+        .Yellow { background-color: #eab308; }
+        .Red { background-color: #ef4444; color: #fff;}
+        .Unknown { background-color: #6b7280; color: #fff; }
+
+        .advisory { text-align: center; font-size: 1.2rem; font-weight: 600; color: #38bdf8; }
+    </style>
+</head>
+<body>
+
+    <div id="map"></div>
+    
+    <div id="dashboard">
+        <h2 id="intersection-name">Locating nearest signal...</h2>
+        <div class="data-row">
+            <span>Distance:</span>
+            <span id="distance">-- m</span>
+        </div>
+        <div class="data-row">
+            <span>Your Speed:</span>
+            <span id="user-speed">-- km/h</span>
+        </div>
+        
+        <div id="light-display" class="light-status Unknown">
+            Connecting...
+        </div>
+
+        <div id="advisory-message" class="advisory">Waiting for GPS lock...</div>
+    </div>
+
+    <script>
+        // 1. Initialize Mapbox
+        mapboxgl.accessToken = 'YOUR_MAPBOX_TOKEN_HERE'; 
+        const map = new mapboxgl.Map({
+            container: 'map',
+            style: 'mapbox://styles/mapbox/dark-v11', 
+            center: [-79.3832, 43.6532], // Default map center (Toronto)
+            zoom: 14,
+            pitch: 45 // Tilts the map for a navigation view
+        });
+
+        // Add a blue dot marker for the user
+        const userMarker = new mapboxgl.Marker({ color: '#3b82f6' })
+            .setLngLat([-79.3832, 43.6532])
+            .addTo(map);
+
+        // 2. Track User's GPS Location natively through the browser
+        if ('geolocation' in navigator) {
+            navigator.geolocation.watchPosition(
+                async (position) => {
+                    const lat = position.coords.latitude;
+                    const lng = position.coords.longitude;
+                    const speed = position.coords.speed || 0; 
+                    
+                    // Update map and marker live
+                    userMarker.setLngLat([lng, lat]);
+                    map.flyTo({ center: [lng, lat], speed: 0.5 });
+                    
+                    // Convert m/s to km/h for the display
+                    document.getElementById('user-speed').innerText = Math.round(speed * 3.6) + ' km/h';
+
+                    // 3. Query the Python backend for the speed advisory
+                    try {
+                        const response = await fetch(`/api/glosa?lat=${lat}&lng=${lng}&speed=${speed}`);
+                        const data = await response.json();
+                        
+                        if (data.error) return;
+
+                        // Update the dashboard HTML
+                        document.getElementById('intersection-name').innerText = data.intersection;
+                        document.getElementById('distance').innerText = data.distance_m + ' m';
+                        
+                        const display = document.getElementById('light-display');
+                        display.className = 'light-status ' + data.state;
+                        display.innerText = data.state + ' - ' + data.time_left_sec + 's';
+                        
+                        document.getElementById('advisory-message').innerText = data.advisory;
+
+                    } catch (err) {
+                        console.error('Error fetching data:', err);
+                    }
+                },
+                (error) => {
+                    document.getElementById('intersection-name').innerText = "Please allow location access";
+                },
+                { enableHighAccuracy: true, maximumAge: 0 }
+            );
+        } else {
+            alert("Geolocation is not supported by your browser.");
+        }
+    </script>
+</body>
+</html>
